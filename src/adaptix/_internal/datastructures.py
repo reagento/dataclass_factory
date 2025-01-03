@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import (
     Collection,
     Hashable,
@@ -6,6 +7,7 @@ from collections.abc import (
     KeysView,
     Mapping,
     Reversible,
+    Sequence,
     Set,
     Sized,
     ValuesView,
@@ -270,3 +272,23 @@ class ImmutableStack(Reversible[T_co], Hashable, Sized, Generic[T_co]):
 
     def count(self, item: T_co) -> int:  # type: ignore[misc]
         return sum(loc == item for loc in reversed(self))
+
+
+ItemT = TypeVar("ItemT", bound=Hashable)
+
+
+class OrderedUniqueGrouper(Generic[K, ItemT]):
+    __slots__ = ("_key_to_item_list", "_key_to_item_set")
+
+    def __init__(self):
+        self._key_to_item_list = defaultdict(list)
+        self._key_to_item_set = defaultdict(set)
+
+    def add(self, key: K, item: ItemT) -> None:
+        if key in self._key_to_item_set and item not in self._key_to_item_set[key]:
+            self._key_to_item_set[key].add(item)
+            self._key_to_item_list[key].append(item)
+
+    def finalize(self) -> Mapping[K, Sequence[ItemT]]:
+        self._key_to_item_list.default_factory = None
+        return self._key_to_item_list

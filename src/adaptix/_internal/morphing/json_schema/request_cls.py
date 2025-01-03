@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from ...definitions import Direction
 from ...provider.located_request import LocatedRequest
-from .definitions import JSONSchema, JSONSchemaRef
+from .definitions import JSONSchema, RefSource
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class JSONSchemaRequest(LocatedRequest[JSONSchema], WithJSONSchemaContext):
 
 
 @dataclass(frozen=True)
-class JSONSchemaRefRequest(LocatedRequest[JSONSchemaRef], WithJSONSchemaContext):
+class RefSourceRequest(LocatedRequest[RefSource], WithJSONSchemaContext):
     json_schema: JSONSchema
 
 

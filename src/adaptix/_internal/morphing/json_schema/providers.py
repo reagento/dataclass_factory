@@ -1,8 +1,8 @@
 from ...provider.essential import Mediator
 from ...provider.located_request import LocatedRequestMethodsProvider
 from ...provider.methods_provider import method_handler
-from .definitions import JSONSchemaRef
-from .request_cls import InlineJSONSchemaRequest, JSONSchemaRefRequest
+from .definitions import RefSource
+from .request_cls import InlineJSONSchemaRequest, RefSourceRequest
 
 
 class InlineJSONSchemaProvider(LocatedRequestMethodsProvider):
@@ -16,20 +16,12 @@ class InlineJSONSchemaProvider(LocatedRequestMethodsProvider):
 
 class JSONSchemaRefProvider(LocatedRequestMethodsProvider):
     @method_handler
-    def provide_json_schema_ref(self, mediator: Mediator, request: JSONSchemaRefRequest) -> JSONSchemaRef:
-        return JSONSchemaRef(
-            value=self._get_reference_value(request),
-            is_final=False,
+    def provide_ref_source(self, mediator: Mediator, request: RefSourceRequest) -> RefSource:
+        return RefSource(
+            value=None,
             json_schema=request.json_schema,
             loc_stack=request.loc_stack,
         )
-
-    def _get_reference_value(self, request: JSONSchemaRefRequest) -> str:
-        tp = request.loc_stack.last.type
-        try:
-            return tp.__name__
-        except AttributeError:
-            return str(tp)
 
 
 class ConstantJSONSchemaRefProvider(LocatedRequestMethodsProvider):
@@ -37,10 +29,9 @@ class ConstantJSONSchemaRefProvider(LocatedRequestMethodsProvider):
         self._ref_value = ref_value
 
     @method_handler
-    def provide_json_schema_ref(self, mediator: Mediator, request: JSONSchemaRefRequest) -> JSONSchemaRef:
-        return JSONSchemaRef(
+    def provide_ref_source(self, mediator: Mediator, request: RefSourceRequest) -> RefSource:
+        return RefSource(
             value=self._ref_value,
-            is_final=True,
             json_schema=request.json_schema,
             loc_stack=request.loc_stack,
         )

@@ -68,7 +68,7 @@ class ABCProxy(LoaderProvider, DumperProvider):
             LoaderRequest(
                 loc_stack=request.loc_stack.replace_last_type(self._impl),
             ),
-            lambda x: f"Cannot create loader for union. Loader for {self._impl} cannot be created",
+            lambda x: f"Cannot create loader for {self._abstract}. Loader for {self._impl} cannot be created",
         )
 
     def provide_dumper(self, mediator: Mediator, request: DumperRequest) -> Dumper:
@@ -79,5 +79,5 @@ class ABCProxy(LoaderProvider, DumperProvider):
             DumperRequest(
                 loc_stack=request.loc_stack.replace_last_type(self._impl),
             ),
-            lambda x: f"Cannot create dumper for union. Dumper for {self._impl} cannot be created",
+            lambda x: f"Cannot create dumper for {self._abstract}. Dumper for {self._impl} cannot be created",
         )

@@ -3,7 +3,7 @@ from typing import Any, Callable, Generic, Optional, TypeVar
 
 from ..conversion.request_cls import CoercerRequest, LinkingRequest
 from ..morphing.json_schema.definitions import JSONSchema
-from ..morphing.json_schema.request_cls import InlineJSONSchemaRequest, JSONSchemaRefRequest, JSONSchemaRequest
+from ..morphing.json_schema.request_cls import InlineJSONSchemaRequest, JSONSchemaRequest, RefSourceRequest
 from ..morphing.request_cls import DumperRequest, LoaderRequest
 from ..provider.essential import Mediator, Provider, Request
 from ..provider.loc_stack_tools import format_loc_stack
@@ -104,8 +104,8 @@ class JSONSchemaMiddlewareProvider(LocatedRequestMethodsProvider):
         inline = mediator.mandatory_provide(InlineJSONSchemaRequest(loc_stack=loc_stack, ctx=ctx))
         if inline:
             return json_schema
-        ref = mediator.mandatory_provide(JSONSchemaRefRequest(loc_stack=loc_stack, json_schema=json_schema, ctx=ctx))
-        return JSONSchema(ref=ref)
+        ref_source = mediator.mandatory_provide(RefSourceRequest(loc_stack=loc_stack, json_schema=json_schema, ctx=ctx))
+        return JSONSchema(ref=ref_source)
 
 
 class OperatingRetort(SearchingRetort):
