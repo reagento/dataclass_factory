@@ -54,7 +54,6 @@ class CustomBenchUsedDistributions(SphinxMacroDirective):
                         distributions.update(
                             pyperf_bench_to_measure(release_zip.read(file)).distributions,
                         )
-
         return directive(
             """
             .. list-table::
