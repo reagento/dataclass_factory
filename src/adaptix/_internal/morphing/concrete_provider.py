@@ -9,6 +9,8 @@ from fractions import Fraction
 from io import BytesIO
 from typing import Generic, Optional, TypeVar, Union
 
+from adaptix._internal.utils import Omittable, Omitted
+
 from ..common import Dumper, Loader
 from ..feature_requirement import HAS_PY_311, HAS_SELF_TYPE
 from ..provider.essential import CannotProvide, Mediator
@@ -22,6 +24,7 @@ from .json_schema.schema_model import JSONSchemaBuiltinFormat, JSONSchemaType
 from .load_error import FormatMismatchLoadError, TypeLoadError, ValueLoadError
 from .provider_template import DumperProvider, JSONSchemaProvider, MorphingProvider
 from .request_cls import DumperRequest, LoaderRequest, StrictCoercionRequest
+from .utils import try_normalize_type
 
 
 class IsoFormatProvider(MorphingProvider):
@@ -633,3 +636,23 @@ class LiteralStringProvider(MorphingProvider):
 
     def _generate_json_schema(self, mediator: Mediator, request: JSONSchemaRequest) -> JSONSchema:
         return JSONSchema(type=JSONSchemaType.STRING)
+
+
+def sentinel_dumper(data):
+    if type(data) is Omitted:
+        raise ValueError("Field is missing")
+    return data
+
+
+@for_predicate(Omitted)
+class SentinelProvider(MorphingProvider):
+    def _generate_json_schema(self, mediator: Mediator, request: JSONSchemaRequest) -> JSONSchema:
+        return JSONSchema()
+
+    def provide_dumper(self, mediator: Mediator[Dumper], request: DumperRequest) -> Dumper:
+        return sentinel_dumper
+
+
+    def provide_loader(self, mediator: Mediator[Loader], request: LoaderRequest) -> Loader:
+        return as_is_stub
+

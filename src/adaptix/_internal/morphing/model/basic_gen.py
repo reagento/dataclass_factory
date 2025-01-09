@@ -124,7 +124,9 @@ def get_skipped_fields(shape: BaseShape, name_layout: BaseNameLayout) -> Set[str
     extra_targets = name_layout.extra_move.fields if isinstance(name_layout.extra_move, ExtraTargets) else ()
     return {
         field.id for field in shape.fields
-        if field.id not in used_direct_fields and field.id not in extra_targets
+        if field.id not in used_direct_fields
+           and field.id not in extra_targets
+
     }
 
 
