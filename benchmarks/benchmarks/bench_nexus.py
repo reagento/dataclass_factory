@@ -8,10 +8,24 @@ from argparse import ArgumentParser, Namespace
 from collections import defaultdict
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
-from itertools import chain
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Callable, DefaultDict, Dict, Iterable, List, Mapping, Optional, Sequence, Set, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    DefaultDict,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    TypeVar,
+    Union,
+    cast,
+)
 from zipfile import ZIP_BZIP2, ZipFile
 
 import plotly
@@ -19,7 +33,8 @@ import plotly.graph_objects as go
 import pyperf
 
 from adaptix._internal.utils import pairs
-from benchmarks.pybench.director_api import BenchAccessor, BenchChecker, BenchmarkDirector
+from benchmarks.pybench.director_api import BenchAccessor, BenchChecker, BenchmarkDirector, operator_factory
+from benchmarks.pybench.persistence.filesystem import FileSystemBenchOperator
 
 T = TypeVar("T")
 
@@ -28,34 +43,6 @@ def call_by_namespace(func: Callable[..., T], namespace: Namespace) -> T:
     sig = inspect.signature(func)
     kwargs_for_func = (vars(namespace).keys() & sig.parameters.keys())
     return func(**{key: getattr(namespace, key) for key in kwargs_for_func})
-
-
-class Foundation(ABC):
-    def print(self, *args: str):
-        print(*args)
-
-    def run(self, command: str) -> None:
-        subprocess.run(command, shell=True, check=True)  # nosec  # noqa: DUO116
-
-    def call(self, command: str) -> str:
-        proc = subprocess.run(command, shell=True, capture_output=True, check=True)  # nosec  # noqa: DUO116
-        return proc.stdout.decode("utf-8")
-
-    @classmethod
-    @abstractmethod
-    def add_arguments(cls, parser: ArgumentParser) -> None:
-        ...
-
-    @abstractmethod
-    def start(self) -> None:
-        ...
-
-
-@dataclass(frozen=True)
-class EnvDescription:
-    key: str
-    title: str
-    tox_env: str
 
 
 @dataclass
@@ -67,46 +54,23 @@ class BenchmarkMeasure:
     pyperf: pyperf.Benchmark
 
 
-class AxisBounder(ABC):
-    @abstractmethod
-    def get_hub_x_bound(self, env_to_measures: Mapping[EnvDescription, Sequence[BenchmarkMeasure]]) -> float:
-        pass
-
-
-class ClusterAxisBounder(AxisBounder):
-    def __init__(self, last_cluster_idx: int, boundary_rate: float):
-        self.last_cluster_idx = last_cluster_idx
-        self.boundary_rate = boundary_rate
-
-    def _split_into_clusters(self, measures: Iterable[BenchmarkMeasure]) -> Sequence[Sequence[BenchmarkMeasure]]:
-        clusters: List[List[BenchmarkMeasure]] = []
-        current_cluster: List[BenchmarkMeasure] = []
-        for prev, current in pairs(measures):
-            if current.pyperf.mean() / prev.pyperf.mean() >= self.boundary_rate:
-                clusters.append(current_cluster)
-                current_cluster = [current]
-            else:
-                current_cluster.append(current)
-        clusters.append(current_cluster)
-        return clusters
-
-    def get_hub_x_bound(self, env_to_measures: Mapping[EnvDescription, Sequence[BenchmarkMeasure]]) -> float:
-        max_bound_value = max(
-            self._split_into_clusters(measures)[self.last_cluster_idx][-1].pyperf.mean()
-            for measures in env_to_measures.values()
-        )
-        return max_bound_value * 10 ** 6 * 1.08
+def pyperf_bench_to_measure(data: Union[str, bytes]) -> BenchmarkMeasure:
+    pybench_data = json.loads(data)["pybench_data"]
+    return BenchmarkMeasure(
+        base=pybench_data["base"],
+        tags=pybench_data["tags"],
+        kwargs=pybench_data["kwargs"],
+        distributions=pybench_data["distributions"],
+        pyperf=pyperf.Benchmark.loads(data),
+    )
 
 
 @dataclass(frozen=True)
-class HubDescription:
+class EnvDescription:
     key: str
-    module: str
     title: str
-    x_bounder: AxisBounder
+    tox_env: str
 
-
-RELEASE_DATA = Path(__file__).parent.parent / "release_data"
 
 BENCHMARK_ENVS: Iterable[EnvDescription] = [
     EnvDescription(
@@ -154,6 +118,69 @@ KEY_TO_ENV = {
     env_description.key: env_description
     for env_description in BENCHMARK_ENVS
 }
+
+
+class Foundation(ABC):
+    def print(self, *args: str):
+        print(*args)
+
+    def run(self, command: str) -> None:
+        subprocess.run(command, shell=True, check=True)  # nosec  # noqa: DUO116
+
+    def call(self, command: str) -> str:
+        proc = subprocess.run(command, shell=True, capture_output=True, check=True)  # nosec  # noqa: DUO116
+        return proc.stdout.decode("utf-8")
+
+    @classmethod
+    @abstractmethod
+    def add_arguments(cls, parser: ArgumentParser) -> None:
+        ...
+
+    @abstractmethod
+    def start(self) -> None:
+        ...
+
+
+class AxisBounder(ABC):
+    @abstractmethod
+    def get_hub_x_bound(self, env_to_measures: Mapping[EnvDescription, Sequence[BenchmarkMeasure]]) -> float:
+        pass
+
+
+class ClusterAxisBounder(AxisBounder):
+    def __init__(self, last_cluster_idx: int, boundary_rate: float):
+        self.last_cluster_idx = last_cluster_idx
+        self.boundary_rate = boundary_rate
+
+    def _split_into_clusters(self, measures: Iterable[BenchmarkMeasure]) -> Sequence[Sequence[BenchmarkMeasure]]:
+        clusters: List[List[BenchmarkMeasure]] = []
+        current_cluster: List[BenchmarkMeasure] = []
+        for prev, current in pairs(measures):
+            if current.pyperf.mean() / prev.pyperf.mean() >= self.boundary_rate:
+                clusters.append(current_cluster)
+                current_cluster = [current]
+            else:
+                current_cluster.append(current)
+        clusters.append(current_cluster)
+        return clusters
+
+    def get_hub_x_bound(self, env_to_measures: Mapping[EnvDescription, Sequence[BenchmarkMeasure]]) -> float:
+        max_bound_value = max(
+            self._split_into_clusters(measures)[self.last_cluster_idx][-1].pyperf.mean()
+            for measures in env_to_measures.values()
+        )
+        return max_bound_value * 10 ** 6 * 1.08
+
+
+@dataclass(frozen=True)
+class HubDescription:
+    key: str
+    module: str
+    title: str
+    x_bounder: AxisBounder
+
+
+RELEASE_DATA = Path(__file__).parent.parent / "release_data"
 
 BENCHMARK_HUBS: Iterable[HubDescription] = [
     HubDescription(
@@ -232,6 +259,12 @@ class HubProcessor(Foundation, ABC):
             nargs="+",
             required=False,
         )
+        parser.add_argument(
+            "--sqlite",
+            action="store_true",
+            default=False,
+            required=False,
+        )
 
     def __init__(
         self,
@@ -239,7 +272,9 @@ class HubProcessor(Foundation, ABC):
         exclude: Optional[Sequence[str]] = None,
         env_include: Optional[Sequence[str]] = None,
         env_exclude: Optional[Sequence[str]] = None,
+        sqlite: Optional[bool] = None,
     ):
+        self.sqlite = sqlite
         self.include = include
         self.exclude = exclude
         self.env_include = env_include
@@ -379,8 +414,10 @@ class Orchestrator(HubProcessor):
         env_exclude: Optional[Sequence[str]] = None,
         series: int = 2,
         max_tries: Optional[int] = None,
+        sqlite: bool = False,
     ):
         super().__init__(
+            sqlite=sqlite,
             include=include,
             exclude=exclude,
             env_include=env_include,
@@ -478,8 +515,9 @@ class Orchestrator(HubProcessor):
 
     def update_local_ids_with_warnings(self, case_state: CaseState) -> None:
         local_ids_with_warnings = []
+        reader = operator_factory(case_state.accessor, sqlite=bool(self.sqlite))
         for schema in case_state.accessor.schemas:
-            warnings = case_state.checker.get_warnings(schema)
+            warnings = case_state.checker.get_warnings(schema, reader)
             if warnings is None or warnings:
                 local_ids_with_warnings.append(
                     case_state.accessor.get_local_id(schema),
@@ -505,17 +543,6 @@ class Orchestrator(HubProcessor):
                     f" restarting is stopped",
                 )
                 return
-
-
-def pyperf_bench_to_measure(data: Union[str, bytes]) -> BenchmarkMeasure:
-    pybench_data = json.loads(data)["pybench_data"]
-    return BenchmarkMeasure(
-        base=pybench_data["base"],
-        tags=pybench_data["tags"],
-        kwargs=pybench_data["kwargs"],
-        distributions=pybench_data["distributions"],
-        pyperf=pyperf.Benchmark.loads(data),
-    )
 
 
 @dataclass
@@ -551,8 +578,10 @@ class Renderer(HubProcessor):
         env_include: Optional[Sequence[str]] = None,
         env_exclude: Optional[Sequence[str]] = None,
         output: Optional[str] = None,
+        sqlite: bool = False,
     ):
         super().__init__(
+            sqlite=sqlite,
             include=include,
             exclude=exclude,
             env_include=env_include,
@@ -591,13 +620,8 @@ class Renderer(HubProcessor):
         self.print(f"Open file://{Path(output).absolute()}")
 
     def _director_to_measures(self, director: BenchmarkDirector) -> Sequence[BenchmarkMeasure]:
-        accessor = director.make_accessor()
-        measures = []
-        for schema in accessor.schemas:
-            path = accessor.bench_result_file(accessor.get_id(schema))
-            measures.append(
-                pyperf_bench_to_measure(path.read_text()),
-            )
+        reader = operator_factory(director.make_accessor(), sqlite=bool(self.sqlite))
+        measures = [pyperf_bench_to_measure(d) for d in reader.get_all_bench_results()]
         measures.sort(key=lambda x: x.pyperf.mean())
         return measures
 
@@ -858,14 +882,10 @@ class HubValidator(HubProcessor):
         dist_to_versions: DefaultDict[str, Set[str]] = defaultdict(set)
         for _hub_description, env_to_director in hub_to_director_to_env.items():
             for director in env_to_director.values():
-                accessor = director.make_accessor()
-                for schema in accessor.schemas:
-                    bench_report = json.loads(
-                        accessor.bench_result_file(accessor.get_id(schema)).read_text(),
-                    )
-                    for dist, version in bench_report["pybench_data"]["distributions"].items():
+                reader = operator_factory(director.make_accessor(), sqlite=bool(self.sqlite))
+                for bench_result in reader.get_all_bench_results():
+                    for dist, version in json.loads(bench_result)["pybench_data"]["distributions"].items():
                         dist_to_versions[dist].add(version)
-
         return [
             f"Benchmarks using distribution {dist!r} were taken with different versions {versions!r}"
             for dist, versions in dist_to_versions.items()
@@ -879,6 +899,41 @@ class Releaser(HubProcessor):
         validator.validate(self.filtered_hubs())
         self._release()
 
+    def _get_index_data(self, env_to_files: Mapping[EnvDescription, Iterable[str]]) -> Dict[str, Any]:
+        return {
+            "env_files": {
+                env_description.key: [
+                    file for file in files
+                ]
+                for env_description, files in env_to_files.items()
+            },
+        }
+
+    def _release_from_files(
+        self,
+        operator: FileSystemBenchOperator,
+        release_zip: ZipFile,
+        bench_ids: list[str],
+        bench_results: Sequence[str],
+    ):
+        for file_path, data in zip(
+            [
+                operator.bench_result_file(id_)
+                for id_ in bench_ids
+            ],
+            bench_results,
+        ):
+            release_zip.writestr(file_path.name, data)
+
+    def _release_from_sqlite(
+        self,
+        release_zip: ZipFile,
+        bench_ids: list[str],
+        bench_results: Sequence[str],
+    ):
+        for name, data in zip(bench_ids, bench_results):
+            release_zip.writestr(name, data)
+
     def _release(self):
         hub_to_director_to_env = self.load_directors(self.filtered_hubs())
         for hub_description, env_to_director in hub_to_director_to_env.items():
@@ -886,38 +941,38 @@ class Releaser(HubProcessor):
                 (env_description, director.make_accessor())
                 for env_description, director in env_to_director.items()
             ]
-            env_to_files = {
-                env_description: [
-                    accessor.bench_result_file(accessor.get_id(schema))
-                    for schema in accessor.schemas
-                ]
-                for env_description, accessor in env_with_accessor
+            env_to_accessor = {
+                env_description: accessor for env_description, accessor in env_with_accessor
             }
+
             with ZipFile(
                 file=RELEASE_DATA / f"{hub_description.key}.zip",
                 mode="w",
                 compression=ZIP_BZIP2,
                 compresslevel=9,
             ) as release_zip:
-                for file_path in chain.from_iterable(env_to_files.values()):
-                    release_zip.write(file_path, arcname=file_path.name)
+                for env in env_to_accessor:
+                    accessor = env_to_accessor[env]
+                    bench_operator = operator_factory(accessor, sqlite=bool(self.sqlite))
+                    bench_results = bench_operator.get_all_bench_results()
+                    bench_ids = [accessor.get_id(schema) for schema in accessor.schemas]
+                    for name, data in zip(bench_ids, bench_results):
+                        release_zip.writestr(name + ".json", data)
 
                 release_zip.writestr(
                     "index.json",
                     json.dumps(
-                        self._get_index_data(env_to_files),
+                        self._get_index_data(
+                            {
+                                env_description: [
+                                    accessor.get_id(schema) + ".json"
+                                    for schema in accessor.schemas
+                                ]
+                                for env_description, accessor in env_with_accessor
+                            },
+                        ),
                     ),
                 )
-
-    def _get_index_data(self, env_to_files: Mapping[EnvDescription, Iterable[Path]]) -> Dict[str, Any]:
-        return {
-            "env_files": {
-                env_description.key: [
-                    file.name for file in files
-                ]
-                for env_description, files in env_to_files.items()
-            },
-        }
 
 
 class ListGetter(Foundation):
