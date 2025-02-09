@@ -139,7 +139,7 @@ class MyAccessError(Exception):
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class MyTrailElemMarker(TrailElementMarker):
     value: Any
 
