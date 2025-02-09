@@ -9,14 +9,17 @@ from typing import Union
 
 import pytest
 from tests_helpers import cond_list, raises_exc
+from unit.integrations.sqlalchemy.test_orm import retort
 
-from adaptix import Retort
+from adaptix import DebugTrail, Omittable, Omitted, Retort
 from adaptix._internal.feature_requirement import HAS_PY_311, IS_PYPY
 from adaptix._internal.morphing.concrete_provider import (
     DatetimeFormatProvider,
     DateTimestampProvider,
     DatetimeTimestampProvider,
 )
+from adaptix._internal.morphing.dump_error import SentinelDumpError
+from adaptix._internal.morphing.load_error import LoadError, UnionLoadError
 from adaptix.load_error import FormatMismatchLoadError, TypeLoadError, ValueLoadError
 
 INVALID_INPUT_ISO_FORMAT = (
@@ -514,3 +517,41 @@ def test_complex_loader_provider(strict_coercion, debug_trail):
     raises_exc(ValueLoadError("Bad string format", "foo"), lambda: loader("foo"))
     raises_exc(TypeLoadError(Union[str, complex], None), lambda: loader(None))
     raises_exc(TypeLoadError(Union[str, complex], []), lambda: loader([]))
+
+
+def test_omittable_provider(strict_coercion, debug_trail):
+    retort = Retort(
+        strict_coercion=strict_coercion,
+        debug_trail=debug_trail,
+    )
+
+    dumper = retort.get_dumper(Omittable[int])
+    raises_exc(
+        SentinelDumpError(Omitted),
+        lambda: dumper(Omitted()),
+    )
+    loader = retort.get_loader(Omittable[int])
+    assert loader(1) == 1
+
+    if debug_trail == DebugTrail.DISABLE:
+        raises_exc(
+            LoadError(),
+            lambda: loader(Omitted()),
+        )
+        raises_exc(
+            LoadError(),
+            lambda: loader([]),
+        )
+    elif debug_trail in (DebugTrail.FIRST, DebugTrail.ALL):
+        if not strict_coercion:
+            return
+        raises_exc(
+            UnionLoadError(
+                f"while loading {Union[int, Omitted]}",
+                [
+                    ValueLoadError("Field value required", "100"),
+                    TypeLoadError(int, "100"),
+                ],
+            ),
+            lambda: loader("100"),
+        )

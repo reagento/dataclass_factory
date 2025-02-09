@@ -32,6 +32,7 @@ from ..concrete_provider import (
     IsoFormatProvider,
     LiteralStringProvider,
     NoneProvider,
+    OmittedProvider,
     RegexPatternProvider,
     SecondsTimedeltaProvider,
     SelfTypeProvider,
@@ -136,6 +137,7 @@ class FilledRetort(OperatingRetort, ABC):
         RegexPatternProvider(),
         SelfTypeProvider(),
         LiteralStringProvider(),
+        OmittedProvider(),
 
         ABCProxy(Mapping, dict),
         ABCProxy(MutableMapping, dict),

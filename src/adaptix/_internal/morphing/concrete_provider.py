@@ -9,19 +9,25 @@ from fractions import Fraction
 from io import BytesIO
 from typing import Generic, Optional, TypeVar, Union
 
+from adaptix._internal.utils import Omittable, Omitted
+
+from ... import DebugTrail
 from ..common import Dumper, Loader
 from ..feature_requirement import HAS_PY_311, HAS_SELF_TYPE
 from ..provider.essential import CannotProvide, Mediator
 from ..provider.loc_stack_filtering import P, create_loc_stack_checker
 from ..provider.loc_stack_tools import find_owner_with_field
 from ..provider.located_request import LocatedRequest, for_predicate
+from ..provider.location import GenericParamLoc
 from ..special_cases_optimization import as_is_stub
+from .dump_error import SentinelDumpError
 from .json_schema.definitions import JSONSchema
 from .json_schema.request_cls import JSONSchemaRequest
 from .json_schema.schema_model import JSONSchemaBuiltinFormat, JSONSchemaType
-from .load_error import FormatMismatchLoadError, TypeLoadError, ValueLoadError
+from .load_error import FormatMismatchLoadError, LoadError, TypeLoadError, UnionLoadError, ValueLoadError
 from .provider_template import DumperProvider, JSONSchemaProvider, MorphingProvider
-from .request_cls import DumperRequest, LoaderRequest, StrictCoercionRequest
+from .request_cls import DebugTrailRequest, DumperRequest, LoaderRequest, StrictCoercionRequest
+from .utils import try_normalize_type
 
 
 class IsoFormatProvider(MorphingProvider):
@@ -633,3 +639,27 @@ class LiteralStringProvider(MorphingProvider):
 
     def _generate_json_schema(self, mediator: Mediator, request: JSONSchemaRequest) -> JSONSchema:
         return JSONSchema(type=JSONSchemaType.STRING)
+
+
+def make_sentinel_dumper(sentinel_type: typing.Type):
+    def sentinel_dumper(data):
+        if type(data) is sentinel_type:
+            raise SentinelDumpError(sentinel_type)
+    return sentinel_dumper
+
+
+def sentinel_loader(data):
+    raise ValueLoadError("Field value required", data)
+
+
+@for_predicate(Omitted)
+class OmittedProvider(MorphingProvider):
+    def _generate_json_schema(self, mediator: Mediator, request: JSONSchemaRequest) -> JSONSchema:
+        raise CannotProvide
+
+    def provide_dumper(self, mediator: Mediator[Dumper], request: DumperRequest) -> Dumper:
+        return make_sentinel_dumper(Omitted)
+
+
+    def provide_loader(self, mediator: Mediator[Loader], request: LoaderRequest) -> Loader:
+        return sentinel_loader
